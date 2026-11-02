@@ -1,0 +1,104 @@
+const bcrypt = require("bcrypt");
+
+const UsuarioModel = require("../models/UsuarioModel");
+
+const { gerarToken } = require("../middlewares/usuarioJWT");
+const {
+  schemaCadastroUsuarios,
+  schemaEditarPerfil,
+} = require("../schemas/usuarioSchema");
+
+exports.cadastroUsuario = async (req, res) => {
+  const resultado = schemaCadastroUsuarios.safeParse(req.body);
+
+  if (!resultado.success) {
+    return res.status(400).json(resultado.error.issues);
+  }
+
+  const { nome, email, senha } = resultado.data;
+
+  const usuarioModel = new UsuarioModel();
+
+  const usuario = await usuarioModel.encontrarEmail(email);
+
+  if (usuario) {
+    return res.status(400).send("Email já cadastrado! Insira outro email");
+  }
+
+  try {
+    const saltRoundes = 10;
+
+    const senhaHash = await bcrypt.hash(senha, saltRoundes);
+
+    await usuarioModel.cadastroUsuario(nome, email, senhaHash);
+
+    res.status(201).send("Usuário cadastrado com sucesso!");
+  } catch (error) {
+    res.status(500).send("Erro ao cadastrar usuário!");
+  }
+};
+
+exports.loginUsuario = async (req, res) => {
+  const { email, senha } = req.body;
+
+  try {
+    const usuarioModel = new UsuarioModel();
+
+    const usuario = await usuarioModel.encontrarEmail(email);
+
+    if (!usuario) return res.status(401).send("Usuário não encontrado!");
+
+    const senhaHash = await bcrypt.compare(senha, usuario.senha);
+
+    if (senhaHash) {
+      const token = gerarToken(usuario);
+
+      res
+        .status(201)
+        .json({ message: "Login realizado!", auth: true, token, usuario });
+    } else {
+      res.status(401).send("Senha incorreta!");
+    }
+  } catch (error) {
+    res.status(500).send("Erro ao realizar login!");
+  }
+};
+
+exports.editarPerfil = async (req, res) => {
+  const resultado = schemaEditarPerfil.safeParse(req.body);
+
+  if (!resultado.success) {
+    return res.status(400).json(resultado.error.issues);
+  }
+
+  const { nome, email, senhaAtual, senhaNova } = resultado.data;
+  const id = req.usuario.id;
+
+  try {
+    const usuarioModel = new UsuarioModel();
+
+    const usuario = await usuarioModel.encontrarId(id);
+
+    const senhaVerificada = await bcrypt.compare(senhaAtual, usuario.senha);
+
+    if (senhaVerificada) {
+      const saltRoundes = 10;
+
+      const senhaAtualizada = await bcrypt.hash(senhaNova, saltRoundes);
+
+      await usuarioModel.editarPerfil(id, nome, email, senhaAtualizada);
+
+      const usuario = await usuarioModel.encontrarId(id);
+
+      res.status(200).json({
+        message: "Perfil atualizado!",
+        auth: true,
+        usuario,
+      });
+    } else {
+      res.status(400).send("Senha incorreta!");
+    }
+  } catch (error) {
+    res.status(500).send(error.message);
+  }
+};
